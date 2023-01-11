@@ -32,4 +32,10 @@ Max it's your turn. Where do you want to place your move?
 
 ```
 
+## Google Calendar Customization Automization
+
+This is a true #nerdybynature project. At some point I got fed up with always having to manually change the colour of my calendar events, so I wrote and employed this small Google Apps Script that automaticall detects keywords in the event title and changes the colour. This feature is much more helpful than one would think!
+
+![image](https://user-images.githubusercontent.com/73480232/211834384-19f5d427-6d0f-445a-a424-67c1df7f9d6e.png)
+
 
