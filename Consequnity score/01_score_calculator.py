@@ -97,8 +97,7 @@ regions_filt = regions_filt.with_columns([
 #fig = px.histogram(regions.to_pandas(), x = "n_hom")
 #fig.write_image("region_hist.png") #for some reason this stalls on my PC but I suscpect it to be the installation #windows
 
-
-data = data.with_row_count() # add rownumbers
+data = data.with_row_count("id") # add rownumbers
 data = data.with_column( #add scores
     pl.when(pl.col("allele") == "1|1")
     .then(hom_score)
@@ -117,12 +116,8 @@ results_extended = []
 for chr in chr_list:
     
     chr_data = data.filter(pl.col("chr") == chr)
-    #chr_data = chr_data.sort("chr")
-    print(chr_data)
   
-
     chr_regions = regions_filt.filter(pl.col("chr") == chr)
-    print(chr_regions)
 
     for reg in range(chr_regions.shape[0]):
 
@@ -131,18 +126,16 @@ for chr in chr_list:
         end = pl.select(chr_regions)[reg,"end"]
         n_hom = pl.select(chr_regions)[reg,"n_hom"]
 
-        row_nr_start = chr_data.filter(pl.col("locus") == start).select("row_nr")[0,0]   
-        row_nr_end = chr_data.filter(pl.col("locus") == end).select("row_nr")[0,0]   
-        print("start: ", row_nr_start)
-        print("end: ", row_nr_end)
+        id_start = chr_data.filter(pl.col("locus") == start).select("id")[0,0]   
+        id_end = chr_data.filter(pl.col("locus") == end).select("id")[0,0]   
 
         n_het = 0
 
         while score > 0:
-            row_nr_start += -1
-            row_nr_end += 1
-            start_score = chr_data.filter(pl.col("row_nr") == row_nr_start).select("locus_score")[0,0]
-            end_score = chr_data.filter(pl.col("row_nr") == row_nr_end).select("locus_score")[0,0]
+            id_start += -1
+            id_end += 1
+            start_score = chr_data.filter(pl.col("id") == id_start).select("locus_score")[0,0]
+            end_score = chr_data.filter(pl.col("id") == id_end).select("locus_score")[0,0]
 
      
             if start_score <0 :
@@ -169,24 +162,22 @@ for chr in chr_list:
             if score <0:
                 if start_score <0 :
 
-                    final_start = chr_data.filter(pl.col("row_nr") == row_nr_start +1).select("locus")[0,0]
+                    final_start = chr_data.filter(pl.col("id") == id_start +1).select("locus")[0,0]
                     
                 elif start_score >0 :
 
-                    final_start = chr_data.filter(pl.col("row_nr") == row_nr_start).select("locus")[0,0]
+                    final_start = chr_data.filter(pl.col("id") == id_start).select("locus")[0,0]
 
                 if end_score  <0 :
 
-                    final_end = chr_data.filter(pl.col("row_nr") == row_nr_end -1).select("locus")[0,0]
+                    final_end = chr_data.filter(pl.col("id") == id_end -1).select("locus")[0,0]
                     
                 elif end_score >0 :
 
-                    final_end = chr_data.filter(pl.col("row_nr") == row_nr_end).select("locus")[0,0]
+                    final_end = chr_data.filter(pl.col("id") == id_end).select("locus")[0,0]
                 
                 stretch = [chr, final_start, final_end, n_hom, n_het] 
                 results_extended.append(stretch)
-
-                print(stretch)
 
 
             
