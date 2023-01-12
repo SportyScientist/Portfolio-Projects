@@ -9,20 +9,13 @@ try:
 except ImportError:
     sys.exit("The python module Polars is required as a dependency. Please install the package with \'pip install -U polars\'")
 
-try:
-    import pandas as pd
-except ImportError:
-    sys.exit("The python module NumPy is required as a dependency. Please install the package with \'pip install pandas\'")
-
 parser = argparse.ArgumentParser()
 parser.add_argument("file_path", help="Location of file with loci", type=str)
 parser.add_argument("--region_length", help="Length of homocygotic core region", type=int, default = 50)
 parser.add_argument("--hom_score", help="positive float to weight homozygotic loci", type=float, default = 0.025)
 parser.add_argument("--het_score", help="negative float to penalize heterozygotic loci", type=float, default = -0.975)
 
-
 args = parser.parse_args()
-
 
 file_path = args.file_path
 region_length = args.region_length
@@ -30,13 +23,10 @@ region_length = args.region_length
 hom_score = args.hom_score
 het_score = args.het_score
 
-print(region_length, hom_score,het_score)
-
 
 ###############################################################
 #read in file
 ###############################################################
-
 
 if file_path.endswith('.csv') or file_path.endswith('.csv.gz'):
     data = pl.read_csv(file_path, has_header = False)
@@ -46,10 +36,42 @@ elif file_path.endswith('.tsv') or file_path.endswith('.tsv.gz'):
 
 data.columns = ["chr", "locus", "allele", "seq_depth"]
 
-print(data)
 ###############################################################
 #define functions
 ###############################################################
+
+def get_regions(chr_list):
+     #initiate list for results
+    results = []
+    #we can't have stretches spanning chromosomes, therefore we go through each chromosome separate
+    #option would be to introduce a check if more than one chr is present, but don't think it makes a time difference?
+    for chr in chr_list:
+        chr_data = data.filter(pl.col("chr") == chr)
+        chr_data = chr_data.sort("locus")
+            
+        end = chr_data.shape[0] #get nrows
+
+        #set to first row for now
+        count = 0
+        start = 0
+
+        
+        for locus in range(0,end):
+
+            if pl.select(chr_data)[locus,"allele"] == "1|1" or pl.select(chr_data)[locus,"allele"] == "0|0":
+                count +=1
+            else:
+                if count != 0:
+                    stretch = [chr, chr_data[start,1], chr_data[locus,1], count] # i was originally planning on concatenating polar series, but cs95 has a strong opinion against it https://stackoverflow.com/questions/13784192/creating-an-empty-pandas-dataframe-and-then-filling-it
+                    count = 0
+                    start = locus
+                    results.append(stretch)
+                else:
+                    continue
+
+    regions = pl.DataFrame(results, columns = ['chr', 'start', 'end', 'n_hom'])
+    return regions
+
 def get_score(data):
     data = data.with_row_count() # add rownumbers
     data = data.with_column( #add scores
@@ -120,7 +142,8 @@ def extend_regions():
                     
                     stretch = [chr, final_start, final_end, n_hom, n_het] 
                     results_extended.append(stretch)
-    regions_extended = pd.DataFrame(results_extended, columns = ["chr", "start", "end", "n_hom", "n_het"])
+
+    regions_extended = pl.DataFrame(results_extended, columns = ["chr", "start", "end", "n_hom", "n_het"])
     return regions_extended
 
 def get_chromosome_list(data):
@@ -140,47 +163,16 @@ def get_chromosome_list(data):
 #run functions
 ###############################################################
 chr_list = get_chromosome_list(data)
-print(chr_list)
+
 if os.path.exists("results.csv") == False:
 
     print("Creating results.csv")
-
-    #initiate list for results
-    results = []
-    #we can't have stretches spanning chromosomes, therefore we go through each chromosome separate
-    #option would be to introduce a check if more than one chr is present, but don't think it makes a time difference?
-    for chr in chr_list:
-        chr_data = data.filter(pl.col("chr") == chr)
-        chr_data = chr_data.sort("locus")
-            
-        end = chr_data.shape[0] #get nrows
-
-        #set to first row for now
-        count = 0
-        start = 0
-
-        
-        for locus in range(0,end):
-
-            if pl.select(chr_data)[locus,"allele"] == "1|1" or pl.select(chr_data)[locus,"allele"] == "0|0":
-                count +=1
-            else:
-                if count != 0:
-                    stretch = [chr, chr_data[start,1], chr_data[locus,1], count] # i was originally planning on concatenating polar series, but cs95 has a strong opinion against it https://stackoverflow.com/questions/13784192/creating-an-empty-pandas-dataframe-and-then-filling-it
-                    count = 0
-                    start = locus
-                    results.append(stretch)
-                else:
-                    continue
-
-    regions = pd.DataFrame(results, columns = ['chr', 'start', 'end', 'n_hom'])
-    regions.to_csv("results.csv")
+    regions = get_regions(chr_list)
+    regions.write_csv("results.csv")
 else:
     print("Reading in results")
-    regions = pd.read_csv("results.csv")
-    print(regions.head())
-
-regions = pl.from_pandas(regions)
+    regions = pl.read_csv("results.csv")
+   
 regions_filt = regions.filter(pl.col("n_hom") >= region_length)
 
 regions_filt = regions_filt.with_columns([
@@ -188,12 +180,11 @@ regions_filt = regions_filt.with_columns([
 
 
 data = get_score(data)
-print(data)
-results_extended = []
 
+results_extended = []
 regions_extended = extend_regions()
            
-regions_extended.to_csv("results_extended.csv")
+regions_extended.write_csv("results_extended.csv")
 
 
 
