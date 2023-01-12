@@ -1,10 +1,8 @@
 #Author: Marlene Ganslmeier
 
 import sys
-from datetime import datetime
 import os
-
-time_1 = datetime.now()
+import argparse
 
 try:
     import polars as pl
@@ -12,25 +10,33 @@ except ImportError:
     sys.exit("The python module Polars is required as a dependency. Please install the package with \'pip install -U polars\'")
 
 try:
-    import numpy as np
-except ImportError:
-    sys.exit("The python module NumPy is required as a dependency. Please install the package with \'pip install numpy\'")
-
-try:
     import pandas as pd
 except ImportError:
     sys.exit("The python module NumPy is required as a dependency. Please install the package with \'pip install pandas\'")
 
+parser = argparse.ArgumentParser()
+parser.add_argument("file_path", help="Location of file with loci", type=str)
+parser.add_argument("--region_length", help="Length of homocygotic core region", type=int, default = 50)
+parser.add_argument("--hom_score", help="positive float to weight homozygotic loci", type=float, default = 0.025)
+parser.add_argument("--het_score", help="negative float to penalize heterozygotic loci", type=float, default = -0.975)
 
-#variables
-region_length = 50
-hom_score = 0.025
-het_score = -0.975
+
+args = parser.parse_args()
 
 
+file_path = args.file_path
+region_length = args.region_length
 
-#file_path = input("Welcome. Please specify the path to your variant file here: ")
-file_path = "chr1_2.gt.tsv"
+hom_score = args.hom_score
+het_score = args.het_score
+
+print(region_length, hom_score,het_score)
+
+
+###############################################################
+#read in file
+###############################################################
+
 
 if file_path.endswith('.csv') or file_path.endswith('.csv.gz'):
     data = pl.read_csv(file_path, has_header = False)
@@ -40,16 +46,101 @@ elif file_path.endswith('.tsv') or file_path.endswith('.tsv.gz'):
 
 data.columns = ["chr", "locus", "allele", "seq_depth"]
 
-#get all chromosomes present
-chr_pl = data.select(
-    [
-        pl.col("chr").unique().alias("chr")
-    ]
-)
-# convert to seperated list for iteration later
-chr_np = chr_pl.to_numpy()
-chr_list = chr_np[:,0].tolist()
+print(data)
+###############################################################
+#define functions
+###############################################################
+def get_score(data):
+    data = data.with_row_count() # add rownumbers
+    data = data.with_column( #add scores
+        pl.when(pl.col("allele") == "1|1")
+        .then(hom_score)
+        .when(pl.col("allele") == "0|0")
+        .then(hom_score)
+        .when(pl.col("allele") == "1|0")
+        .then(het_score)
+        .when(pl.col("allele") == "0|1")
+        .then(het_score)
+        .otherwise(pl.col("allele")).alias("locus_score"),)
+    data = data.with_column(pl.col("locus_score").cast(pl.Float64, strict=False))
+    return data
 
+def extend_regions():
+    for chr in chr_list:
+        
+        chr_data = data.filter(pl.col("chr") == chr)  
+
+        chr_regions = regions_filt.filter(pl.col("chr") == chr)
+
+        for reg in range(chr_regions.shape[0]):
+
+            score = pl.select(chr_regions)[reg,"start_score"]
+            start = pl.select(chr_regions)[reg,"start"]
+            end = pl.select(chr_regions)[reg,"end"]
+            n_hom = pl.select(chr_regions)[reg,"n_hom"]
+
+            row_nr_start = chr_data.filter(pl.col("locus") == start).select("row_nr")[0,0]   
+            row_nr_end = chr_data.filter(pl.col("locus") == end).select("row_nr")[0,0]   
+    
+            n_het = 0
+
+            while score > 0:
+                row_nr_start += -1
+                row_nr_end += 1
+                start_score = chr_data.filter(pl.col("row_nr") == row_nr_start).select("locus_score")[0,0]
+                end_score = chr_data.filter(pl.col("row_nr") == row_nr_end).select("locus_score")[0,0]
+
+                if start_score <0 :
+                    n_het += 1
+
+                elif start_score >0 :
+                    n_hom += 1
+                        
+                if end_score  <0 :
+                    n_het += 1
+
+                elif end_score >0 :     
+                    n_hom += 1
+
+                score += start_score
+                score += end_score
+
+                if score <0:
+                    if start_score <0 :
+                        final_start = chr_data.filter(pl.col("row_nr") == row_nr_start +1).select("locus")[0,0]
+                        
+                    elif start_score >0 :
+                        final_start = chr_data.filter(pl.col("row_nr") == row_nr_start).select("locus")[0,0]
+
+                    if end_score  <0 :
+                        final_end = chr_data.filter(pl.col("row_nr") == row_nr_end -1).select("locus")[0,0]
+                        
+                    elif end_score >0 :
+                        final_end = chr_data.filter(pl.col("row_nr") == row_nr_end).select("locus")[0,0]
+                    
+                    stretch = [chr, final_start, final_end, n_hom, n_het] 
+                    results_extended.append(stretch)
+    regions_extended = pd.DataFrame(results_extended, columns = ["chr", "start", "end", "n_hom", "n_het"])
+    return regions_extended
+
+def get_chromosome_list(data):
+    #get all chromosomes present
+    chr_pl = data.select(
+        [
+            pl.col("chr").unique().alias("chr")
+        ]
+    )
+    # convert to seperated list for iteration later
+    chr_np = chr_pl.to_numpy()
+    chr_list = chr_np[:,0].tolist()
+    return chr_list
+
+
+###############################################################
+#run functions
+###############################################################
+chr_list = get_chromosome_list(data)
+print(chr_list)
 if os.path.exists("results.csv") == False:
 
     print("Creating results.csv")
@@ -87,6 +178,7 @@ if os.path.exists("results.csv") == False:
 else:
     print("Reading in results")
     regions = pd.read_csv("results.csv")
+    print(regions.head())
 
 regions = pl.from_pandas(regions)
 regions_filt = regions.filter(pl.col("n_hom") >= region_length)
@@ -94,101 +186,16 @@ regions_filt = regions.filter(pl.col("n_hom") >= region_length)
 regions_filt = regions_filt.with_columns([
     (pl.col("n_hom") * hom_score).alias("start_score")])
 
-#fig = px.histogram(regions.to_pandas(), x = "n_hom")
-#fig.write_image("region_hist.png") #for some reason this stalls on my PC but I suscpect it to be the installation #windows
 
-data = data.with_row_count("id") # add rownumbers
-data = data.with_column( #add scores
-    pl.when(pl.col("allele") == "1|1")
-    .then(hom_score)
-    .when(pl.col("allele") == "0|0")
-    .then(hom_score)
-    .when(pl.col("allele") == "1|0")
-    .then(het_score)
-    .when(pl.col("allele") == "0|1")
-    .then(het_score)
-    .otherwise(pl.col("allele")).alias("locus_score"),
-)
-
-data = data.with_column(pl.col("locus_score").cast(pl.Float64, strict=False))
+data = get_score(data)
+print(data)
 results_extended = []
 
-for chr in chr_list:
-    
-    chr_data = data.filter(pl.col("chr") == chr)
-  
-    chr_regions = regions_filt.filter(pl.col("chr") == chr)
-
-    for reg in range(chr_regions.shape[0]):
-
-        score = pl.select(chr_regions)[reg,"start_score"]
-        start = pl.select(chr_regions)[reg,"start"]
-        end = pl.select(chr_regions)[reg,"end"]
-        n_hom = pl.select(chr_regions)[reg,"n_hom"]
-
-        id_start = chr_data.filter(pl.col("locus") == start).select("id")[0,0]   
-        id_end = chr_data.filter(pl.col("locus") == end).select("id")[0,0]   
-
-        n_het = 0
-
-        while score > 0:
-            id_start += -1
-            id_end += 1
-            start_score = chr_data.filter(pl.col("id") == id_start).select("locus_score")[0,0]
-            end_score = chr_data.filter(pl.col("id") == id_end).select("locus_score")[0,0]
-
-     
-            if start_score <0 :
-                    
-                n_het += 1
-
-            elif start_score >0 :
-
-                n_hom += 1
-                    
-
-            if end_score  <0 :
-
-                n_het += 1
-
-            elif end_score >0 :
-                
-                n_hom += 1
-
-
-            score += start_score
-            score += end_score
-
-            if score <0:
-                if start_score <0 :
-
-                    final_start = chr_data.filter(pl.col("id") == id_start +1).select("locus")[0,0]
-                    
-                elif start_score >0 :
-
-                    final_start = chr_data.filter(pl.col("id") == id_start).select("locus")[0,0]
-
-                if end_score  <0 :
-
-                    final_end = chr_data.filter(pl.col("id") == id_end -1).select("locus")[0,0]
-                    
-                elif end_score >0 :
-
-                    final_end = chr_data.filter(pl.col("id") == id_end).select("locus")[0,0]
-                
-                stretch = [chr, final_start, final_end, n_hom, n_het] 
-                results_extended.append(stretch)
-
-
-            
-regions_extended = pd.DataFrame(results_extended, columns = ["chr", "start", "end", "n_hom", "n_het"])
+regions_extended = extend_regions()
+           
 regions_extended.to_csv("results_extended.csv")
 
 
-time_2 = datetime.now()
-difference = time_2 - time_1
-
-print("This took:" + str(difference.total_seconds()) + "seconds")
 
 
 
