@@ -3,6 +3,12 @@
 import sys
 import os
 import argparse
+from datetime import datetime
+
+now = datetime.now()
+
+current_time = now.strftime("%H:%M:%S")
+print("Current Time =", current_time)
 
 try:
     import polars as pl
@@ -172,7 +178,12 @@ if os.path.exists("results.csv") == False:
 else:
     print("Reading in results")
     regions = pl.read_csv("results.csv")
-   
+
+now = datetime.now()
+
+current_time = now.strftime("%H:%M:%S")
+print("Current Time =", current_time)
+
 regions_filt = regions.filter(pl.col("n_hom") >= region_length)
 
 regions_filt = regions_filt.with_columns([
@@ -187,7 +198,10 @@ regions_extended = extend_regions()
 regions_extended.write_csv("results_extended.csv")
 
 
+now = datetime.now()
 
+current_time = now.strftime("%H:%M:%S")
+print("Current Time =", current_time)
 
 
 
