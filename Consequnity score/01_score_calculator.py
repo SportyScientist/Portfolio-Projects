@@ -20,6 +20,8 @@ parser.add_argument("file_path", help="Location of file with loci", type=str)
 parser.add_argument("--region_length", help="Length of homocygotic core region", type=int, default = 50)
 parser.add_argument("--hom_score", help="positive float to weight homozygotic loci", type=float, default = 0.025)
 parser.add_argument("--het_score", help="negative float to penalize heterozygotic loci", type=float, default = -0.975)
+parser.add_argument("--depth", help="minimal sequencing depth of loci", type=int, default = 8)
+
 
 args = parser.parse_args()
 
@@ -28,6 +30,7 @@ region_length = args.region_length
 
 hom_score = args.hom_score
 het_score = args.het_score
+depth = args.depth
 
 
 ###############################################################
@@ -41,6 +44,7 @@ elif file_path.endswith('.tsv') or file_path.endswith('.tsv.gz'):
     data = pd.read_csv(file_path, sep = "\t", header = 0)
 
 data.columns = ["chr", "locus", "allele", "seq_depth"]
+data = data.loc[data["seq_depth"] >= depth]
 
 ###############################################################
 #define functions
