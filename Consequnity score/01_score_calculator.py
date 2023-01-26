@@ -11,9 +11,9 @@ current_time = now.strftime("%H:%M:%S")
 print("Current Time =", current_time)
 
 try:
-    import polars as pl
+    import pandas as pd
 except ImportError:
-    sys.exit("The python module Polars is required as a dependency. Please install the package with \'pip install -U polars\'")
+    sys.exit("The python module pandas is required as a dependency. Please install the package with \'pip install -U polars\'")
 
 parser = argparse.ArgumentParser()
 parser.add_argument("file_path", help="Location of file with loci", type=str)
@@ -35,10 +35,10 @@ het_score = args.het_score
 ###############################################################
 
 if file_path.endswith('.csv') or file_path.endswith('.csv.gz'):
-    data = pl.read_csv(file_path, has_header = False)
+    data = pd.read_csv(file_path, header = 0)
 
 elif file_path.endswith('.tsv') or file_path.endswith('.tsv.gz'):
-    data = pl.read_csv(file_path, sep = "\t", has_header = False)
+    data = pd.read_csv(file_path, sep = "\t", header = 0)
 
 data.columns = ["chr", "locus", "allele", "seq_depth"]
 
@@ -52,8 +52,8 @@ def get_regions(chr_list):
     #we can't have stretches spanning chromosomes, therefore we go through each chromosome separate
     #option would be to introduce a check if more than one chr is present, but don't think it makes a time difference?
     for chr in chr_list:
-        chr_data = data.filter(pl.col("chr") == chr)
-        chr_data = chr_data.sort("locus")
+        chr_data = data.loc[data["chr"] == chr]
+        #print(chr_data)
             
         end = chr_data.shape[0] #get nrows
 
@@ -62,61 +62,59 @@ def get_regions(chr_list):
         start = 0
 
         
-        for locus in range(0,end):
+        for item in range(0,end):
 
-            if pl.select(chr_data)[locus,"allele"] == "1|1" or pl.select(chr_data)[locus,"allele"] == "0|0":
+            if chr_data.iloc[item].loc["allele"] == "0|0" or chr_data.iloc[item].loc["allele"] == "1|1":
                 count +=1
+                
             else:
                 if count != 0:
-                    stretch = [chr, chr_data[start,1], chr_data[locus,1], count] # i was originally planning on concatenating polar series, but cs95 has a strong opinion against it https://stackoverflow.com/questions/13784192/creating-an-empty-pandas-dataframe-and-then-filling-it
+                    stretch = [chr, chr_data.iloc[start,1], chr_data.iloc[item,1], count] 
+                    #print(stretch)
                     count = 0
-                    start = locus
+                    start = item
                     results.append(stretch)
                 else:
                     continue
 
-    regions = pl.DataFrame(results, columns = ['chr', 'start', 'end', 'n_hom'])
+    regions = pd.DataFrame(results, columns = ['chr', 'start', 'end', 'n_hom'])
     return regions
 
+
 def get_score(data):
-    data = data.with_row_count() # add rownumbers
-    data = data.with_column( #add scores
-        pl.when(pl.col("allele") == "1|1")
-        .then(hom_score)
-        .when(pl.col("allele") == "0|0")
-        .then(hom_score)
-        .when(pl.col("allele") == "1|0")
-        .then(het_score)
-        .when(pl.col("allele") == "0|1")
-        .then(het_score)
-        .otherwise(pl.col("allele")).alias("locus_score"),)
-    data = data.with_column(pl.col("locus_score").cast(pl.Float64, strict=False))
+    data = data.assign(id = range(1, len(data) + 1))
+    data['allele_score'] = data['allele'].apply(lambda x: hom_score if x in ["1|1","0|0"] else (het_score if x in ["1|0","0|1"] else x))
+    data['allele_score'] = pd.to_numeric(data['allele_score'], errors='coerce')
     return data
+
 
 def extend_regions():
     for chr in chr_list:
         
-        chr_data = data.filter(pl.col("chr") == chr)  
+        chr_data = data.loc[data["chr"] == chr]
 
-        chr_regions = regions_filt.filter(pl.col("chr") == chr)
+        chr_regions = regions_filt.loc[regions_filt["chr"] == chr]
 
         for reg in range(chr_regions.shape[0]):
 
-            score = pl.select(chr_regions)[reg,"start_score"]
-            start = pl.select(chr_regions)[reg,"start"]
-            end = pl.select(chr_regions)[reg,"end"]
-            n_hom = pl.select(chr_regions)[reg,"n_hom"]
+            score = chr_regions.iloc[reg].loc["start_score"]
+            start = chr_regions.iloc[reg].loc["start"]
+            end = chr_regions.iloc[reg].loc["end"]
+            n_hom = chr_regions.iloc[reg].loc["n_hom"]
 
-            row_nr_start = chr_data.filter(pl.col("locus") == start).select("row_nr")[0,0]   
-            row_nr_end = chr_data.filter(pl.col("locus") == end).select("row_nr")[0,0]   
-    
+            row_nr_start = chr_data.loc[chr_data['locus'] == start,'id'].iat[0]
+            row_nr_end = chr_data.loc[chr_data['locus'] == end, 'id'].iat[0]
+                
             n_het = 0
 
             while score > 0:
                 row_nr_start += -1
                 row_nr_end += 1
-                start_score = chr_data.filter(pl.col("row_nr") == row_nr_start).select("locus_score")[0,0]
-                end_score = chr_data.filter(pl.col("row_nr") == row_nr_end).select("locus_score")[0,0]
+                # start_score = chr_data.filter(pl.col("row_nr") == row_nr_start).select("locus_score")[0,0]
+                # end_score = chr_data.filter(pl.col("row_nr") == row_nr_end).select("locus_score")[0,0]
+                start_score = chr_data.loc[chr_data['id'] == row_nr_start, 'allele_score'].iat[0]
+                end_score = chr_data.loc[chr_data['id'] == row_nr_end, 'allele_score'].iat[0]
+
 
                 if start_score <0 :
                     n_het += 1
@@ -135,33 +133,26 @@ def extend_regions():
 
                 if score <0:
                     if start_score <0 :
-                        final_start = chr_data.filter(pl.col("row_nr") == row_nr_start +1).select("locus")[0,0]
-                        
+                        final_start = chr_data.loc[chr_data['id'] == row_nr_start +1, 'locus'].iat[0]
                     elif start_score >0 :
-                        final_start = chr_data.filter(pl.col("row_nr") == row_nr_start).select("locus")[0,0]
+                        final_start = chr_data.loc[chr_data['id'] == row_nr_start, 'locus'].iat[0]
 
                     if end_score  <0 :
-                        final_end = chr_data.filter(pl.col("row_nr") == row_nr_end -1).select("locus")[0,0]
-                        
+                        final_end = chr_data.loc[chr_data['id'] == row_nr_end -1, 'locus'].iat[0]
                     elif end_score >0 :
-                        final_end = chr_data.filter(pl.col("row_nr") == row_nr_end).select("locus")[0,0]
+                        final_end = chr_data.loc[chr_data['id'] == row_nr_end, 'locus'].iat[0]
+
                     
                     stretch = [chr, final_start, final_end, n_hom, n_het] 
                     results_extended.append(stretch)
 
-    regions_extended = pl.DataFrame(results_extended, columns = ["chr", "start", "end", "n_hom", "n_het"])
+    regions_extended = pd.DataFrame(results_extended, columns = ["chr", "start", "end", "n_hom", "n_het"])
     return regions_extended
 
 def get_chromosome_list(data):
     #get all chromosomes present
-    chr_pl = data.select(
-        [
-            pl.col("chr").unique().alias("chr")
-        ]
-    )
-    # convert to seperated list for iteration later
-    chr_np = chr_pl.to_numpy()
-    chr_list = chr_np[:,0].tolist()
+    chromosomes = data['chr'].unique()
+    chr_list = chromosomes.tolist()
     return chr_list
 
 
@@ -170,32 +161,23 @@ def get_chromosome_list(data):
 ###############################################################
 chr_list = get_chromosome_list(data)
 
-if os.path.exists("results.csv") == False:
-
-    print("Creating results.csv")
-    regions = get_regions(chr_list)
-    regions.write_csv("results.csv")
-else:
-    print("Reading in results")
-    regions = pl.read_csv("results.csv")
+regions = get_regions(chr_list)
 
 now = datetime.now()
 
 current_time = now.strftime("%H:%M:%S")
-print("Current Time =", current_time)
+print("Regions are done. Current Time =", current_time)
 
-regions_filt = regions.filter(pl.col("n_hom") >= region_length)
+regions_filt = regions[regions["n_hom"] > region_length]
 
-regions_filt = regions_filt.with_columns([
-    (pl.col("n_hom") * hom_score).alias("start_score")])
-
+regions_filt = regions_filt.assign(start_score=regions_filt["n_hom"] * hom_score)
 
 data = get_score(data)
 
 results_extended = []
 regions_extended = extend_regions()
            
-regions_extended.write_csv("results_extended.csv")
+regions_extended.to_csv("results_extended.csv")
 
 
 now = datetime.now()
