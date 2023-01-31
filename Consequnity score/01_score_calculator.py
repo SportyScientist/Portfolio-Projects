@@ -44,7 +44,26 @@ elif file_path.endswith('.tsv') or file_path.endswith('.tsv.gz'):
     data = pd.read_csv(file_path, sep = "\t", header = 0)
 
 data.columns = ["chr", "locus", "allele", "seq_depth"]
+
+#unify data format
+data['allele'] = data['allele'].str.replace('/','|')
+
+#filter for autosomes only
+ensemble = list(range(1,23))
+uscs = ["chr"+str(i) for i in range(1, 23)]
+
+chromosomes = ensemble + uscs
+data = data[data['chr'].isin(chromosomes)]
+
+
+#filter for sequencing depth
 data = data.loc[data["seq_depth"] >= depth]
+
+#get total number of homocygotic variants
+hom_alleles = ["1|1", "0|0"]
+total_hom_counts = data['allele'].isin(hom_alleles).sum()
+
+data = data[:10_000]
 
 ###############################################################
 #define functions
@@ -147,10 +166,11 @@ def extend_regions():
                         final_end = chr_data.loc[chr_data['id'] == row_nr_end, 'locus'].iat[0]
 
                     
-                    stretch = [chr, final_start, final_end, n_hom, n_het] 
+                    len = int(final_end - final_start)
+                    stretch = [chr, final_start, final_end, len, int(n_hom), n_het] 
                     results_extended.append(stretch)
 
-    regions_extended = pd.DataFrame(results_extended, columns = ["chr", "start", "end", "n_hom", "n_het"])
+    regions_extended = pd.DataFrame(results_extended, columns = ["chr", "start", "end", "len", "n_hom", "n_het"])
     return regions_extended
 
 def get_chromosome_list(data):
@@ -180,6 +200,14 @@ data = get_score(data)
 
 results_extended = []
 regions_extended = extend_regions()
+
+total_region_length = regions_extended["len"].sum()
+
+regions_extended["reg_score"] = regions_extended.apply(lambda x: round((total_region_length * x.n_hom) / total_hom_counts,2), axis=1)
+
+print(regions_extended)
+
+
            
 regions_extended.to_csv("results_extended.csv")
 
