@@ -63,7 +63,7 @@ data = data.loc[data["seq_depth"] >= depth]
 hom_alleles = ["1|1", "0|0"]
 total_hom_counts = data['allele'].isin(hom_alleles).sum()
 
-data = data[:10_000]
+#data = data[:10_000]
 
 ###############################################################
 #define functions
@@ -99,6 +99,7 @@ def get_regions(chr_list):
                     results.append(stretch)
                 else:
                     continue
+        print("Chromosome ", chr, " done!")
 
     regions = pd.DataFrame(results, columns = ['chr', 'start', 'end', 'n_hom'])
     return regions
@@ -133,8 +134,6 @@ def extend_regions():
             while score > 0:
                 row_nr_start += -1
                 row_nr_end += 1
-                # start_score = chr_data.filter(pl.col("row_nr") == row_nr_start).select("locus_score")[0,0]
-                # end_score = chr_data.filter(pl.col("row_nr") == row_nr_end).select("locus_score")[0,0]
                 start_score = chr_data.loc[chr_data['id'] == row_nr_start, 'allele_score'].iat[0]
                 end_score = chr_data.loc[chr_data['id'] == row_nr_end, 'allele_score'].iat[0]
 
@@ -196,6 +195,8 @@ regions_filt = regions[regions["n_hom"] > region_length]
 
 regions_filt = regions_filt.assign(start_score=regions_filt["n_hom"] * hom_score)
 
+regions_filt.to_csv("regions_filt.csv")
+
 data = get_score(data)
 
 results_extended = []
@@ -205,8 +206,14 @@ total_region_length = regions_extended["len"].sum()
 
 regions_extended["reg_score"] = regions_extended.apply(lambda x: round((total_region_length * x.n_hom) / total_hom_counts,2), axis=1)
 
-print(regions_extended)
+#print(regions_extended)
 
+
+for i in range(1,len(regions_extended)):
+    if regions_extended.loc[i][1] < regions_extended.loc[i-1][2] and regions_extended.loc[i-1][0] == regions_extended.loc[i][0]:
+        print("Overlap found!")
+
+    
 
            
 regions_extended.to_csv("results_extended.csv")
