@@ -1,7 +1,6 @@
 #Author: Marlene Ganslmeier
 
 import sys
-import os
 import argparse
 from datetime import datetime
 
@@ -13,7 +12,7 @@ print("Current Time =", current_time)
 try:
     import pandas as pd
 except ImportError:
-    sys.exit("The python module pandas is required as a dependency. Please install the package with \'pip install -U polars\'")
+    sys.exit("The python module pandas is required as a dependency. Please install the package with \'pip3 install pandas\'")
 
 parser = argparse.ArgumentParser()
 parser.add_argument("file_path", help="Location of file with loci", type=str)
@@ -63,17 +62,16 @@ data = data.loc[data["seq_depth"] >= depth]
 hom_alleles = ["1|1", "0|0"]
 total_hom_counts = data['allele'].isin(hom_alleles).sum()
 
-#data = data[:10_000]
 
 ###############################################################
 #define functions
 ###############################################################
 
+#finds initial regions of defined length as given in flags
 def get_regions(chr_list):
      #initiate list for results
     results = []
-    #we can't have stretches spanning chromosomes, therefore we go through each chromosome separate
-    #option would be to introduce a check if more than one chr is present, but don't think it makes a time difference?
+
     for chr in chr_list:
         chr_data = data.loc[data["chr"] == chr]
         #print(chr_data)
@@ -105,6 +103,7 @@ def get_regions(chr_list):
     return regions
 
 
+# assigns allele score 
 def get_score(data):
     data = data.assign(id = range(1, len(data) + 1))
     data['allele_score'] = data['allele'].apply(lambda x: hom_score if x in ["1|1","0|0"] else (het_score if x in ["1|0","0|1"] else x))
@@ -112,12 +111,16 @@ def get_score(data):
     return data
 
 
+#extends core region to either side until score is to small
 def extend_regions():
     for chr in chr_list:
         
         chr_data = data.loc[data["chr"] == chr]
 
         chr_regions = regions_filt.loc[regions_filt["chr"] == chr]
+
+        chr_start_id = chr_data.iloc[0][4]    
+        #print(chr_start_id)
 
         for reg in range(chr_regions.shape[0]):
 
@@ -126,16 +129,25 @@ def extend_regions():
             end = chr_regions.iloc[reg].loc["end"]
             n_hom = chr_regions.iloc[reg].loc["n_hom"]
 
-            row_nr_start = chr_data.loc[chr_data['locus'] == start,'id'].iat[0]
-            row_nr_end = chr_data.loc[chr_data['locus'] == end, 'id'].iat[0]
-                
+            id_start = chr_data.loc[chr_data['locus'] == start,'id'].iat[0]
+            id_end = chr_data.loc[chr_data['locus'] == end, 'id'].iat[0]
+            
+           
             n_het = 0
 
             while score > 0:
-                row_nr_start += -1
-                row_nr_end += 1
-                start_score = chr_data.loc[chr_data['id'] == row_nr_start, 'allele_score'].iat[0]
-                end_score = chr_data.loc[chr_data['id'] == row_nr_end, 'allele_score'].iat[0]
+
+                # limit to start of chromosome
+                if id_start == chr_start_id:
+                    start_score = 0
+                    id_start += 0
+                    id_end += 1
+                    end_score = chr_data.loc[chr_data['id'] == id_end, 'allele_score'].iat[0]
+                else:
+                    id_start += -1
+                    id_end += 1
+                    start_score = chr_data.loc[chr_data['id'] == id_start, 'allele_score'].iat[0]
+                    end_score = chr_data.loc[chr_data['id'] == id_end, 'allele_score'].iat[0]
 
 
                 if start_score <0 :
@@ -143,6 +155,9 @@ def extend_regions():
 
                 elif start_score >0 :
                     n_hom += 1
+                
+                elif start_score == 0:
+                    n_hom += 0
                         
                 if end_score  <0 :
                     n_het += 1
@@ -155,14 +170,14 @@ def extend_regions():
 
                 if score <0:
                     if start_score <0 :
-                        final_start = chr_data.loc[chr_data['id'] == row_nr_start +1, 'locus'].iat[0]
-                    elif start_score >0 :
-                        final_start = chr_data.loc[chr_data['id'] == row_nr_start, 'locus'].iat[0]
-
+                        final_start = chr_data.loc[chr_data['id'] == id_start +1, 'locus'].iat[0]
+                    elif start_score >= 0 :
+                        final_start = chr_data.loc[chr_data['id'] == id_start, 'locus'].iat[0]
+                
                     if end_score  <0 :
-                        final_end = chr_data.loc[chr_data['id'] == row_nr_end -1, 'locus'].iat[0]
+                        final_end = chr_data.loc[chr_data['id'] == id_end -1, 'locus'].iat[0]
                     elif end_score >0 :
-                        final_end = chr_data.loc[chr_data['id'] == row_nr_end, 'locus'].iat[0]
+                        final_end = chr_data.loc[chr_data['id'] == id_end, 'locus'].iat[0]
 
                     
                     len = int(final_end - final_start)
@@ -193,29 +208,69 @@ print("Regions are done. Current Time =", current_time)
 
 regions_filt = regions[regions["n_hom"] > region_length]
 
+#start score for region extension
 regions_filt = regions_filt.assign(start_score=regions_filt["n_hom"] * hom_score)
 
-regions_filt.to_csv("regions_filt.csv")
+#regions_filt.to_csv("regions_filt.csv")
+
+#regions_filt = pd.read_csv("regions_filt_test_data.csv", header = 0)
 
 data = get_score(data)
 
 results_extended = []
 regions_extended = extend_regions()
 
-total_region_length = regions_extended["len"].sum()
+float_col = regions_extended.select_dtypes(include=['float64']) # This will select float columns only
 
-regions_extended["reg_score"] = regions_extended.apply(lambda x: round((total_region_length * x.n_hom) / total_hom_counts,2), axis=1)
+for col in float_col.columns.values:
+    regions_extended[col] = regions_extended[col].astype('int64')
 
 #print(regions_extended)
 
+full_OL_count = 0
+partial_OL_count = 0
 
+
+#at some point this can probably go into the main function
 for i in range(1,len(regions_extended)):
-    if regions_extended.loc[i][1] < regions_extended.loc[i-1][2] and regions_extended.loc[i-1][0] == regions_extended.loc[i][0]:
-        print("Overlap found!")
-
     
+    if regions_extended.loc[i][1] < regions_extended.loc[i-1][2] and \
+        regions_extended.loc[i][1] > regions_extended.loc[i-1][1] and \
+        regions_extended.loc[i][2] < regions_extended.loc[i-1][2] and \
+        regions_extended.loc[i-1][0] == regions_extended.loc[i][0]: #and on same chromosome
 
-           
+        full_OL_count += 1
+        
+        regions_extended.drop(index = i)
+
+    elif regions_extended.loc[i][1] < regions_extended.loc[i-1][2] and \
+        regions_extended.loc[i][1] > regions_extended.loc[i-1][1] and \
+        regions_extended.loc[i][2] > regions_extended.loc[i-1][2] and \
+        regions_extended.loc[i-1][0] == regions_extended.loc[i][0]:
+         #print("Partial overlap found!")
+         partial_OL_count +=1
+
+         chr = regions_extended.loc[i][0]
+         start = regions_extended.loc[i-1][1]
+         end = regions_extended.loc[i][2]
+         chr_data = data.loc[data["chr"] == chr]
+         #print(chr_data)
+         sliced_data = chr_data[chr_data['locus'].between(start, end)]
+         n_hom = sliced_data['allele_score'].value_counts()[0.025]
+         n_het = sliced_data['allele_score'].value_counts()[-0.975]
+         #score = sliced_data['allele_score'].sum()
+         len = int(end - start)
+         stretch = [chr, start, end, len, int(n_hom), int(n_het)] 
+         regions_extended.iloc[i] = stretch
+         regions_extended.drop(index = i-1)
+
+      
+         
+print("Removed ", full_OL_count, "full overlaps and joined ", partial_OL_count, "partial overlaps.")
+          
+total_region_length = regions_extended["len"].sum()
+regions_extended["reg_score"] = regions_extended.apply(lambda x: round((total_region_length * x.n_hom) / total_hom_counts,2), axis=1)
+
 regions_extended.to_csv("results_extended.csv")
 
 
